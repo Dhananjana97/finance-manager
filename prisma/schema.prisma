@@ -1,0 +1,88 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Account Types Enum
+enum AccountType {
+  ASSET
+  LIABILITY
+  INCOME
+  EXPENSE
+}
+
+// Account Model - represents different accounts (bank accounts, cash, etc.)
+model Account {
+  id          String      @id @default(cuid())
+  name        String
+  type        AccountType
+  balance     Decimal     @default(0)
+  description String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  // Relations
+  entries TransactionEntry[]
+
+  @@map("accounts")
+}
+
+// Tag Model - for categorizing transactions
+model Tag {
+  id          String   @id @default(cuid())
+  name        String   @unique
+  description String?
+  color       String?  // For UI color coding
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  transactions Transaction[]
+
+  @@map("tags")
+}
+
+// Transaction Model - represents a complete transaction
+model Transaction {
+  id          String   @id @default(cuid())
+  description String
+  amount      Decimal
+  date        DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  tag        Tag?   @relation(fields: [tagId], references: [id])
+  tagId      String?
+  entries    TransactionEntry[]
+  // For tracking transaction type (income, expense, transfer)
+  transactionType String // 'INCOME', 'EXPENSE', 'TRANSFER'
+
+  @@map("transactions")
+}
+
+// Transaction Entry Model - represents individual debit/credit entries
+model TransactionEntry {
+  id            String      @id @default(cuid())
+  transactionId String
+  accountId     String
+  debitAmount   Decimal     @default(0) // Positive for debit
+  creditAmount  Decimal     @default(0) // Positive for credit
+  entryType     String      // 'DEBIT' or 'CREDIT'
+  createdAt     DateTime    @default(now())
+
+  // Relations
+  transaction Transaction @relation(fields: [transactionId], references: [id], onDelete: Cascade)
+  account     Account     @relation(fields: [accountId], references: [id])
+
+  @@unique([transactionId, accountId, entryType])
+  @@map("transaction_entries")
+}
