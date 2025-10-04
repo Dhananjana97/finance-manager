@@ -15,7 +15,7 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { name, type, description } = body;
+    const { name, type, currency, description, initialBalance } = body;
 
     if (!name || !type) {
       return NextResponse.json({ error: "Name and type are required" }, { status: 400 });
@@ -25,12 +25,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Invalid account type" }, { status: 400 });
     }
 
-    const account = await accountingService.createAccount(
+    const account = await accountingService.createAccount({
       name,
       type,
-      description
-      
-    );
+      currency: currency || 'USD',
+      description,
+      initialBalance: initialBalance ? parseFloat(initialBalance) : 0
+    });
+    
     return NextResponse.json(account, { status: 201 });
   } catch (error) {
     console.error("Error creating account:", error);

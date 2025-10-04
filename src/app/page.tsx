@@ -9,6 +9,7 @@ interface Account {
   name: string;
   type: "ASSET" | "LIABILITY" | "INCOME" | "EXPENSE";
   balance: number;
+  currency: string;
   description?: string;
 }
 
@@ -29,6 +30,7 @@ export default function Dashboard() {
   // Modal state for creating a transaction
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [transactionType, setTransactionType] = useState<"INCOME" | "EXPENSE" | "TRANSFER">("INCOME");
+  const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
   const [formData, setFormData] = useState({
     description: "",
     amount: "",
@@ -41,9 +43,52 @@ export default function Dashboard() {
     toAccountId: "",
   });
 
+  // Currency exchange state
+  const [exchangeRate, setExchangeRate] = useState<number | null>(null);
+  const [customExchangeRate, setCustomExchangeRate] = useState<string>("");
+  const [convertedAmount, setConvertedAmount] = useState<number | null>(null);
+  const [isLoadingRate, setIsLoadingRate] = useState(false);
+  const [rateError, setRateError] = useState<string | null>(null);
+
   useEffect(() => {
     fetchData();
   }, []);
+
+  // Fetch exchange rate when both accounts are selected for transfer
+  const fetchExchangeRate = async (fromAccountId: string, toAccountId: string, amount: number) => {
+    if (!fromAccountId || !toAccountId || !amount) return;
+
+    const fromAccount = accounts.find((a) => a.id === fromAccountId);
+    const toAccount = accounts.find((a) => a.id === toAccountId);
+
+    if (!fromAccount || !toAccount || fromAccount.currency === toAccount.currency) {
+      setExchangeRate(null);
+      setConvertedAmount(null);
+      return;
+    }
+
+    setIsLoadingRate(true);
+    setRateError(null);
+
+    try {
+      const response = await fetch(
+        `/api/currency/rate?from=${fromAccount.currency}&to=${toAccount.currency}&date=${formData.date}`
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        setExchangeRate(data.rate);
+        setConvertedAmount(amount * data.rate);
+        setCustomExchangeRate(data.rate.toString());
+      } else {
+        setRateError("Failed to fetch exchange rate");
+      }
+    } catch (err) {
+      setRateError("Error fetching exchange rate");
+    } finally {
+      setIsLoadingRate(false);
+    }
+  };
 
   const fetchData = async () => {
     try {
@@ -83,6 +128,24 @@ export default function Dashboard() {
       default:
         return <DollarSign className="h-5 w-5 text-gray-600" />;
     }
+  };
+
+  const getCurrencySymbol = (currency: string) => {
+    const symbols: { [key: string]: string } = {
+      LKR: "Rs.",
+      USD: "$",
+      EUR: "€",
+      GBP: "£",
+      JPY: "¥",
+      AUD: "A$",
+      CAD: "C$",
+      CHF: "CHF",
+      CNY: "¥",
+      INR: "₹",
+      BRL: "R$",
+      KRW: "₩",
+    };
+    return symbols[currency] || currency;
   };
 
   const getAccountTypeColor = (type: string) => {
@@ -155,6 +218,10 @@ export default function Dashboard() {
           expenseAccountId: formData.expenseAccountId,
         };
       } else {
+        const fromAccount = accounts.find((a) => a.id === formData.fromAccountId);
+        const toAccount = accounts.find((a) => a.id === formData.toAccountId);
+        const hasDifferentCurrencies = fromAccount && toAccount && fromAccount.currency !== toAccount.currency;
+
         payload = {
           type: "TRANSFER",
           description: formData.description,
@@ -163,6 +230,12 @@ export default function Dashboard() {
           tagId: formData.tagId || undefined,
           fromAccountId: formData.fromAccountId,
           toAccountId: formData.toAccountId,
+          // Include custom exchange rate if currencies are different and user has modified it
+          ...(hasDifferentCurrencies &&
+            customExchangeRate &&
+            parseFloat(customExchangeRate) !== exchangeRate && {
+              customExchangeRate: parseFloat(customExchangeRate),
+            }),
         };
       }
 
@@ -186,6 +259,7 @@ export default function Dashboard() {
         fromAccountId: "",
         toAccountId: "",
       });
+      setSelectedAccount(null);
       setShowCreateForm(false);
       fetchData();
     } catch (err) {
@@ -305,6 +379,146 @@ export default function Dashboard() {
               </div>
 
               <form onSubmit={handleSubmit} className="space-y-4">
+                {/* Account Selection First */}
+                <div className="mb-6">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    {transactionType === "INCOME" && "Select Asset Account (Where money goes)"}
+                    {transactionType === "EXPENSE" && "Select Asset Account (Where money comes from)"}
+                    {transactionType === "TRANSFER" && "Select From Account"}
+                  </label>
+                  <select
+                    value={selectedAccount?.id || ""}
+                    onChange={(e) => {
+                      const account = accounts.find((a) => a.id === e.target.value);
+                      setSelectedAccount(account || null);
+                      if (transactionType === "INCOME") {
+                        setFormData({ ...formData, assetAccountId: e.target.value });
+                      } else if (transactionType === "EXPENSE") {
+                        setFormData({ ...formData, assetAccountId: e.target.value });
+                      } else if (transactionType === "TRANSFER") {
+                        setFormData({ ...formData, fromAccountId: e.target.value });
+                      }
+                    }}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-black bg-white"
+                    required
+                  >
+                    <option value="">Select account</option>
+                    {accounts
+                      .filter((a) => a.type === "ASSET")
+                      .map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.name} ({a.currency})
+                        </option>
+                      ))}
+                  </select>
+                  {selectedAccount && (
+                    <div className="mt-2 text-sm text-gray-600">
+                      Selected: {selectedAccount.name} - Currency: {selectedAccount.currency} (
+                      {getCurrencySymbol(selectedAccount.currency)})
+                    </div>
+                  )}
+                </div>
+
+                {/* Second Account for Transfer */}
+                {transactionType === "TRANSFER" && (
+                  <div className="mb-6">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Select To Account</label>
+                    <select
+                      value={formData.toAccountId}
+                      onChange={(e) => {
+                        setFormData({ ...formData, toAccountId: e.target.value });
+                        // Fetch exchange rate when both accounts are selected
+                        if (formData.fromAccountId && e.target.value && formData.amount) {
+                          fetchExchangeRate(formData.fromAccountId, e.target.value, parseFloat(formData.amount));
+                        }
+                      }}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-black bg-white"
+                      required
+                    >
+                      <option value="">Select destination account</option>
+                      {accounts
+                        .filter((a) => a.type === "ASSET" && a.id !== selectedAccount?.id)
+                        .map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.name} ({a.currency})
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                )}
+
+                {/* Currency Exchange Rate Display for Transfer */}
+                {transactionType === "TRANSFER" &&
+                  formData.fromAccountId &&
+                  formData.toAccountId &&
+                  (() => {
+                    const fromAccount = accounts.find((a) => a.id === formData.fromAccountId);
+                    const toAccount = accounts.find((a) => a.id === formData.toAccountId);
+                    const hasDifferentCurrencies =
+                      fromAccount && toAccount && fromAccount.currency !== toAccount.currency;
+
+                    if (!hasDifferentCurrencies) return null;
+
+                    return (
+                      <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                        <h4 className="text-sm font-medium text-blue-900 mb-3">Currency Exchange</h4>
+
+                        {isLoadingRate ? (
+                          <div className="text-sm text-blue-700">Loading exchange rate...</div>
+                        ) : rateError ? (
+                          <div className="text-sm text-red-600">{rateError}</div>
+                        ) : exchangeRate ? (
+                          <div className="space-y-3">
+                            <div className="text-sm text-gray-700">
+                              <span className="font-medium">Exchange Rate:</span> 1 {fromAccount?.currency} ={" "}
+                              {exchangeRate.toFixed(4)} {toAccount?.currency}
+                            </div>
+
+                            {formData.amount && (
+                              <div className="text-sm text-gray-700">
+                                <span className="font-medium">Converted Amount:</span> {formData.amount}{" "}
+                                {fromAccount?.currency} = {convertedAmount?.toFixed(2)} {toAccount?.currency}
+                              </div>
+                            )}
+
+                            <div className="flex items-center space-x-2">
+                              <label className="text-sm font-medium text-gray-700">Custom Rate:</label>
+                              <input
+                                type="number"
+                                step="0.0001"
+                                value={customExchangeRate}
+                                onChange={(e) => {
+                                  setCustomExchangeRate(e.target.value);
+                                  const customRate = parseFloat(e.target.value);
+                                  if (!isNaN(customRate) && formData.amount) {
+                                    setConvertedAmount(parseFloat(formData.amount) * customRate);
+                                  }
+                                }}
+                                className="w-32 px-2 py-1 border border-gray-300 rounded text-sm"
+                                placeholder="Auto"
+                              />
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  if (formData.fromAccountId && formData.toAccountId && formData.amount) {
+                                    fetchExchangeRate(
+                                      formData.fromAccountId,
+                                      formData.toAccountId,
+                                      parseFloat(formData.amount)
+                                    );
+                                  }
+                                }}
+                                className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded hover:bg-blue-200"
+                              >
+                                Refresh
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })()}
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
@@ -317,15 +531,33 @@ export default function Dashboard() {
                     />
                   </div>
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">Amount (LKR)</label>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">
+                      Amount {selectedAccount ? `(${selectedAccount.currency})` : ""}
+                    </label>
                     <input
                       type="number"
                       step="0.01"
                       value={formData.amount}
-                      onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
+                      onChange={(e) => {
+                        setFormData({ ...formData, amount: e.target.value });
+                        // Fetch exchange rate when amount changes for transfer
+                        if (
+                          transactionType === "TRANSFER" &&
+                          formData.fromAccountId &&
+                          formData.toAccountId &&
+                          e.target.value
+                        ) {
+                          fetchExchangeRate(formData.fromAccountId, formData.toAccountId, parseFloat(e.target.value));
+                        }
+                      }}
                       className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-black bg-white"
                       required
                     />
+                    {selectedAccount && (
+                      <div className="mt-1 text-xs text-gray-500">
+                        Currency: {selectedAccount.currency} ({getCurrencySymbol(selectedAccount.currency)})
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -357,135 +589,34 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                {/* Accounts by type */}
-                {transactionType === "INCOME" && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Asset Account (Where money goes)
-                      </label>
-                      <select
-                        value={formData.assetAccountId}
-                        onChange={(e) => setFormData({ ...formData, assetAccountId: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-black bg-white"
-                        required
-                      >
-                        <option value="">Select asset account</option>
-                        {accounts
-                          .filter((a) => a.type === "ASSET")
-                          .map((a) => (
-                            <option key={a.id} value={a.id}>
-                              {a.name}
-                            </option>
-                          ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Income Account (Income source)
-                      </label>
-                      <select
-                        value={formData.incomeAccountId}
-                        onChange={(e) => setFormData({ ...formData, incomeAccountId: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-black bg-white"
-                        required
-                      >
-                        <option value="">Select income account</option>
-                        {accounts
-                          .filter((a) => a.type === "INCOME")
-                          .map((a) => (
-                            <option key={a.id} value={a.id}>
-                              {a.name}
-                            </option>
-                          ))}
-                      </select>
-                    </div>
-                  </div>
-                )}
-
-                {transactionType === "EXPENSE" && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Asset Account (Where money comes from)
-                      </label>
-                      <select
-                        value={formData.assetAccountId}
-                        onChange={(e) => setFormData({ ...formData, assetAccountId: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-black bg-white"
-                        required
-                      >
-                        <option value="">Select asset account</option>
-                        {accounts
-                          .filter((a) => a.type === "ASSET")
-                          .map((a) => (
-                            <option key={a.id} value={a.id}>
-                              {a.name}
-                            </option>
-                          ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">
-                        Expense Account (Expense category)
-                      </label>
-                      <select
-                        value={formData.expenseAccountId}
-                        onChange={(e) => setFormData({ ...formData, expenseAccountId: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-black bg-white"
-                        required
-                      >
-                        <option value="">Select expense account</option>
-                        {accounts
-                          .filter((a) => a.type === "EXPENSE")
-                          .map((a) => (
-                            <option key={a.id} value={a.id}>
-                              {a.name}
-                            </option>
-                          ))}
-                      </select>
-                    </div>
-                  </div>
-                )}
-
-                {transactionType === "TRANSFER" && (
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">From Account</label>
-                      <select
-                        value={formData.fromAccountId}
-                        onChange={(e) => setFormData({ ...formData, fromAccountId: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-black bg-white"
-                        required
-                      >
-                        <option value="">Select source account</option>
-                        {accounts
-                          .filter((a) => a.type === "ASSET")
-                          .map((a) => (
-                            <option key={a.id} value={a.id}>
-                              {a.name}
-                            </option>
-                          ))}
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">To Account</label>
-                      <select
-                        value={formData.toAccountId}
-                        onChange={(e) => setFormData({ ...formData, toAccountId: e.target.value })}
-                        className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-black bg-white"
-                        required
-                      >
-                        <option value="">Select destination account</option>
-                        {accounts
-                          .filter((a) => a.type === "ASSET")
-                          .map((a) => (
-                            <option key={a.id} value={a.id}>
-                              {a.name}
-                            </option>
-                          ))}
-                      </select>
-                    </div>
+                {/* Income/Expense Account Selection */}
+                {(transactionType === "INCOME" || transactionType === "EXPENSE") && (
+                  <div className="mb-6">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      {transactionType === "INCOME" && "Select Income Account (Income source)"}
+                      {transactionType === "EXPENSE" && "Select Expense Account (Expense category)"}
+                    </label>
+                    <select
+                      value={transactionType === "INCOME" ? formData.incomeAccountId : formData.expenseAccountId}
+                      onChange={(e) => {
+                        if (transactionType === "INCOME") {
+                          setFormData({ ...formData, incomeAccountId: e.target.value });
+                        } else {
+                          setFormData({ ...formData, expenseAccountId: e.target.value });
+                        }
+                      }}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-black bg-white"
+                      required
+                    >
+                      <option value="">Select {transactionType.toLowerCase()} account</option>
+                      {accounts
+                        .filter((a) => a.type === transactionType.toUpperCase())
+                        .map((a) => (
+                          <option key={a.id} value={a.id}>
+                            {a.name} ({a.currency})
+                          </option>
+                        ))}
+                    </select>
                   </div>
                 )}
 
@@ -513,7 +644,13 @@ export default function Dashboard() {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {accounts && accounts.length > 0 ? (
             accounts.map((account) => (
-              <div key={account.id} className={`p-4 rounded-lg border ${getAccountTypeColor(account.type)}`}>
+              <div
+                key={account.id}
+                className={`p-4 rounded-lg border ${getAccountTypeColor(
+                  account.type
+                )} cursor-pointer hover:shadow-md transition-shadow`}
+                onClick={() => router.push(`/accounts/${account.id}`)}
+              >
                 <div className="flex items-center justify-between mb-2">
                   <div className="flex items-center">
                     {getAccountTypeIcon(account.type)}

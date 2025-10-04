@@ -10,9 +10,31 @@ interface Account {
   name: string;
   type: AccountType;
   balance: number;
+  currency: string;
   description?: string;
 }
 
+interface Currency {
+  code: string;
+  symbol: string;
+  name: string;
+}
+
+const COMMON_CURRENCIES: Currency[] = [
+  { code: 'LKR', symbol: 'Rs.', name: 'Sri Lankan Rupee' },
+  { code: 'USD', symbol: '$', name: 'US Dollar' },
+  { code: 'EUR', symbol: '€', name: 'Euro' },
+  { code: 'GBP', symbol: '£', name: 'British Pound' },
+  { code: 'JPY', symbol: '¥', name: 'Japanese Yen' },
+  { code: 'AUD', symbol: 'A$', name: 'Australian Dollar' },
+  { code: 'CAD', symbol: 'C$', name: 'Canadian Dollar' },
+  { code: 'CHF', symbol: 'CHF', name: 'Swiss Franc' },
+  { code: 'CNY', symbol: '¥', name: 'Chinese Yuan' },
+  { code: 'INR', symbol: '₹', name: 'Indian Rupee' },
+  { code: 'BRL', symbol: 'R$', name: 'Brazilian Real' },
+  { code: 'KRW', symbol: '₩', name: 'South Korean Won' },
+  { code: 'THB', symbol: '฿', name: 'Thai Baht' },
+];
 export default function AccountsPage() {
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [loading, setLoading] = useState(true);
@@ -20,7 +42,9 @@ export default function AccountsPage() {
   const [formData, setFormData] = useState({
     name: "",
     type: "ASSET" as AccountType,
+    currency: "LKR",
     description: "",
+    initialBalance: "",
   });
 
   useEffect(() => {
@@ -52,7 +76,13 @@ export default function AccountsPage() {
 
       if (response.ok) {
         await fetchAccounts();
-        setFormData({ name: "", type: "ASSET", description: "" });
+        setFormData({ 
+          name: "", 
+          type: "ASSET", 
+          currency: "LKR", 
+          description: "", 
+          initialBalance: "" 
+        });
         setShowCreateForm(false);
       }
     } catch (error) {
@@ -86,11 +116,17 @@ export default function AccountsPage() {
     }
   };
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat("en-LK", {
-      style: "currency",
-      currency: "LKR",
-    }).format(amount);
+  const getCurrencySymbol = (currencyCode: string) => {
+    const currency = COMMON_CURRENCIES.find(c => c.code === currencyCode);
+    return currency?.symbol || currencyCode;
+  };
+
+  const formatCurrency = (amount: number, currencyCode: string) => {
+    const symbol = getCurrencySymbol(currencyCode);
+    return `${symbol}${new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(amount)}`;
   };
 
   if (loading) {
@@ -122,29 +158,60 @@ export default function AccountsPage() {
         <div className="mb-8 p-6 bg-white rounded-lg border border-gray-200 shadow-sm">
           <h2 className="text-xl font-semibold text-gray-900 mb-4">Create New Account</h2>
           <form onSubmit={handleSubmit} className="space-y-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Account Name</label>
-              <input
-                type="text"
-                value={formData.name}
-                onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-black bg-white"
-                required
-              />
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Account Name</label>
+                <input
+                  type="text"
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-black bg-white"
+                  required
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Account Type</label>
+                <select
+                  value={formData.type}
+                  onChange={(e) => setFormData({ ...formData, type: e.target.value as AccountType })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-black bg-white"
+                >
+                  <option value="ASSET">Asset</option>
+                  <option value="LIABILITY">Liability</option>
+                  <option value="INCOME">Income</option>
+                  <option value="EXPENSE">Expense</option>
+                </select>
+              </div>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Account Type</label>
-              <select
-                value={formData.type}
-                onChange={(e) => setFormData({ ...formData, type: e.target.value as AccountType })}
-                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-black bg-white"
-              >
-                <option value="ASSET">Asset</option>
-                <option value="LIABILITY">Liability</option>
-                <option value="INCOME">Income</option>
-                <option value="EXPENSE">Expense</option>
-              </select>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Currency</label>
+                <select
+                  value={formData.currency}
+                  onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-black bg-white"
+                >
+                  {COMMON_CURRENCIES.map((currency) => (
+                    <option key={currency.code} value={currency.code}>
+                      {currency.code} - {currency.name} ({currency.symbol})
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Initial Balance</label>
+                <input
+                  type="number"
+                  step="0.01"
+                  value={formData.initialBalance}
+                  onChange={(e) => setFormData({ ...formData, initialBalance: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-black bg-white"
+                  placeholder="0.00"
+                />
+              </div>
             </div>
+
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-1">Description (Optional)</label>
               <textarea
@@ -187,9 +254,16 @@ export default function AccountsPage() {
               </Link>
             </div>
 
-            <div className="text-2xl font-bold text-gray-900 mb-2">{formatCurrency(account.balance)}</div>
+            <div className="text-2xl font-bold text-gray-900 mb-2">
+              {formatCurrency(account.balance, account.currency)}
+            </div>
 
-            <div className="text-sm text-gray-600 capitalize mb-2">{account.type.toLowerCase()}</div>
+            <div className="flex items-center justify-between text-sm text-gray-600 mb-2">
+              <span className="capitalize">{account.type.toLowerCase()}</span>
+              <span className="bg-gray-100 px-2 py-1 rounded text-xs font-medium">
+                {account.currency}
+              </span>
+            </div>
 
             {account.description && <div className="text-sm text-gray-500">{account.description}</div>}
           </div>

@@ -9,6 +9,7 @@ interface Account {
   name: string;
   type: AccountType;
   balance: number;
+  currency: string;
 }
 
 interface Tag {
@@ -30,6 +31,9 @@ interface Transaction {
     debitAmount: number;
     creditAmount: number;
     entryType: string;
+    originalAmount?: number;
+    originalCurrency?: string;
+    exchangeRate?: number;
   }[];
 }
 
@@ -40,6 +44,7 @@ export default function TransactionsPage() {
   const [loading, setLoading] = useState(true);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [transactionType, setTransactionType] = useState<"INCOME" | "EXPENSE" | "TRANSFER">("INCOME");
+  const [selectedAccount, setSelectedAccount] = useState<Account | null>(null);
 
   // Pagination & filters
   const [page, setPage] = useState<number>(1);
@@ -64,6 +69,7 @@ export default function TransactionsPage() {
 
   useEffect(() => {
     fetchData();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -161,6 +167,7 @@ export default function TransactionsPage() {
           fromAccountId: "",
           toAccountId: "",
         });
+        setSelectedAccount(null);
         setShowCreateForm(false);
         // Refresh accounts & transactions
         fetchData();
@@ -183,15 +190,72 @@ export default function TransactionsPage() {
     }
   };
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat("en-LK", {
-      style: "currency",
-      currency: "LKR",
-    }).format(amount);
+  const getCurrencySymbol = (currency: string) => {
+    const symbols: { [key: string]: string } = {
+      LKR: "Rs.",
+      USD: "$",
+      EUR: "€",
+      GBP: "£",
+      JPY: "¥",
+      AUD: "A$",
+      CAD: "C$",
+      CHF: "CHF",
+      CNY: "¥",
+      INR: "₹",
+      BRL: "R$",
+      KRW: "₩",
+    };
+    return symbols[currency] || currency;
+  };
+
+  const formatCurrency = (amount: number, currencyCode: string) => {
+    const symbol = getCurrencySymbol(currencyCode);
+    return `${symbol}${new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(amount)}`;
   };
 
   const formatDate = (dateString: string) => {
     return new Date(dateString).toLocaleDateString("en-LK");
+  };
+
+  const getTransactionPrimaryCurrency = (transaction: Transaction) => {
+    // For transfers, show the currency of the debit account (destination)
+    // For income/expense, show the currency of the asset account
+    const debitEntry = transaction.entries.find(e => e.entryType === 'DEBIT');
+    if (debitEntry) {
+      return debitEntry.account.currency;
+    }
+    
+    // Fallback to first entry's currency
+    return transaction.entries[0]?.account.currency || 'USD';
+  };
+
+  const getTransactionAmount = (transaction: Transaction) => {
+    // For display purposes, show the transaction amount in the primary currency
+    const primaryCurrency = getTransactionPrimaryCurrency(transaction);
+    const debitEntry = transaction.entries.find(e => e.entryType === 'DEBIT');
+    
+    if (debitEntry) {
+      return {
+        amount: debitEntry.debitAmount,
+        currency: debitEntry.account.currency,
+        isConverted: !!(debitEntry.originalAmount && debitEntry.originalCurrency && debitEntry.exchangeRate),
+        originalAmount: debitEntry.originalAmount,
+        originalCurrency: debitEntry.originalCurrency,
+        exchangeRate: debitEntry.exchangeRate
+      };
+    }
+    
+    return {
+      amount: transaction.amount,
+      currency: primaryCurrency,
+      isConverted: false,
+      originalAmount: transaction.amount,
+      originalCurrency: primaryCurrency,
+      exchangeRate: 1
+    };
   };
 
   if (loading) {
@@ -332,6 +396,68 @@ export default function TransactionsPage() {
           </div>
 
           <form onSubmit={handleSubmit} className="space-y-4">
+            {/* Account Selection First */}
+            <div className="mb-6">
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                {transactionType === "INCOME" && "Select Asset Account (Where money goes)"}
+                {transactionType === "EXPENSE" && "Select Asset Account (Where money comes from)"}
+                {transactionType === "TRANSFER" && "Select From Account"}
+              </label>
+              <select
+                value={selectedAccount?.id || ""}
+                onChange={(e) => {
+                  const account = accounts.find((a) => a.id === e.target.value);
+                  setSelectedAccount(account || null);
+                  if (transactionType === "INCOME") {
+                    setFormData({ ...formData, assetAccountId: e.target.value });
+                  } else if (transactionType === "EXPENSE") {
+                    setFormData({ ...formData, assetAccountId: e.target.value });
+                  } else if (transactionType === "TRANSFER") {
+                    setFormData({ ...formData, fromAccountId: e.target.value });
+                  }
+                }}
+                className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-black bg-white"
+                required
+              >
+                <option value="">Select account</option>
+                {accounts
+                  .filter((a) => a.type === "ASSET")
+                  .map((a) => (
+                    <option key={a.id} value={a.id}>
+                      {a.name} ({a.currency})
+                    </option>
+                  ))}
+              </select>
+              {selectedAccount && (
+                <div className="mt-2 text-sm text-gray-600">
+                  Selected: {selectedAccount.name} - Currency: {selectedAccount.currency} (
+                  {getCurrencySymbol(selectedAccount.currency)})
+                </div>
+              )}
+            </div>
+
+            {/* Second Account for Transfer */}
+            {transactionType === "TRANSFER" && (
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 mb-2">Select To Account</label>
+                <select
+                  value={formData.toAccountId}
+                  onChange={(e) => setFormData({ ...formData, toAccountId: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-black bg-white"
+                  required
+                >
+                  <option value="">Select destination account</option>
+                  {accounts
+                    .filter((a) => a.type === "ASSET" && a.id !== selectedAccount?.id)
+                    .map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name} ({a.currency})
+                      </option>
+                    ))}
+                </select>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Description</label>
@@ -344,7 +470,9 @@ export default function TransactionsPage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Amount (LKR)</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Amount {selectedAccount ? `(${selectedAccount.currency})` : ""}
+                </label>
                 <input
                   type="number"
                   step="0.01"
@@ -353,6 +481,11 @@ export default function TransactionsPage() {
                   className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-black bg-white"
                   required
                 />
+                {selectedAccount && (
+                  <div className="mt-1 text-xs text-gray-500">
+                    Currency: {selectedAccount.currency} ({getCurrencySymbol(selectedAccount.currency)})
+                  </div>
+                )}
               </div>
             </div>
 
@@ -384,133 +517,34 @@ export default function TransactionsPage() {
               </div>
             </div>
 
-            {/* Account Selection based on transaction type */}
-            {transactionType === "INCOME" && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Asset Account (Where money goes)
-                  </label>
-                  <select
-                    value={formData.assetAccountId}
-                    onChange={(e) => setFormData({ ...formData, assetAccountId: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-black bg-white"
-                    required
-                  >
-                    <option value="">Select asset account</option>
-                    {accounts
-                      .filter((a) => a.type === "ASSET")
-                      .map((account) => (
-                        <option key={account.id} value={account.id}>
-                          {account.name}
-                        </option>
-                      ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Income Account (Income source)</label>
-                  <select
-                    value={formData.incomeAccountId}
-                    onChange={(e) => setFormData({ ...formData, incomeAccountId: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-black bg-white"
-                    required
-                  >
-                    <option value="">Select income account</option>
-                    {accounts
-                      .filter((a) => a.type === "INCOME")
-                      .map((account) => (
-                        <option key={account.id} value={account.id}>
-                          {account.name}
-                        </option>
-                      ))}
-                  </select>
-                </div>
-              </div>
-            )}
-
-            {transactionType === "EXPENSE" && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Asset Account (Where money comes from)
-                  </label>
-                  <select
-                    value={formData.assetAccountId}
-                    onChange={(e) => setFormData({ ...formData, assetAccountId: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-black bg-white"
-                    required
-                  >
-                    <option value="">Select asset account</option>
-                    {accounts
-                      .filter((a) => a.type === "ASSET")
-                      .map((account) => (
-                        <option key={account.id} value={account.id}>
-                          {account.name}
-                        </option>
-                      ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Expense Account (Expense category)
-                  </label>
-                  <select
-                    value={formData.expenseAccountId}
-                    onChange={(e) => setFormData({ ...formData, expenseAccountId: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-black bg-white"
-                    required
-                  >
-                    <option value="">Select expense account</option>
-                    {accounts
-                      .filter((a) => a.type === "EXPENSE")
-                      .map((account) => (
-                        <option key={account.id} value={account.id}>
-                          {account.name}
-                        </option>
-                      ))}
-                  </select>
-                </div>
-              </div>
-            )}
-
-            {transactionType === "TRANSFER" && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">From Account</label>
-                  <select
-                    value={formData.fromAccountId}
-                    onChange={(e) => setFormData({ ...formData, fromAccountId: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-black bg-white"
-                    required
-                  >
-                    <option value="">Select source account</option>
-                    {accounts
-                      .filter((a) => a.type === "ASSET")
-                      .map((account) => (
-                        <option key={account.id} value={account.id}>
-                          {account.name}
-                        </option>
-                      ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">To Account</label>
-                  <select
-                    value={formData.toAccountId}
-                    onChange={(e) => setFormData({ ...formData, toAccountId: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-black bg-white"
-                    required
-                  >
-                    <option value="">Select destination account</option>
-                    {accounts
-                      .filter((a) => a.type === "ASSET")
-                      .map((account) => (
-                        <option key={account.id} value={account.id}>
-                          {account.name}
-                        </option>
-                      ))}
-                  </select>
-                </div>
+            {/* Income/Expense Account Selection */}
+            {(transactionType === "INCOME" || transactionType === "EXPENSE") && (
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  {transactionType === "INCOME" && "Select Income Account (Income source)"}
+                  {transactionType === "EXPENSE" && "Select Expense Account (Expense category)"}
+                </label>
+                <select
+                  value={transactionType === "INCOME" ? formData.incomeAccountId : formData.expenseAccountId}
+                  onChange={(e) => {
+                    if (transactionType === "INCOME") {
+                      setFormData({ ...formData, incomeAccountId: e.target.value });
+                    } else {
+                      setFormData({ ...formData, expenseAccountId: e.target.value });
+                    }
+                  }}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 text-black bg-white"
+                  required
+                >
+                  <option value="">Select {transactionType.toLowerCase()} account</option>
+                  {accounts
+                    .filter((a) => a.type === transactionType.toUpperCase())
+                    .map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.name} ({a.currency})
+                      </option>
+                    ))}
+                </select>
               </div>
             )}
 
@@ -553,30 +587,48 @@ export default function TransactionsPage() {
               </button>
             </div>
           ) : (
-            transactions.map((transaction) => (
-              <div key={transaction.id} className="px-6 py-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center">
-                    {getTransactionIcon(transaction.transactionType)}
-                    <div className="ml-3">
-                      <div className="text-sm font-medium text-gray-900">{transaction.description}</div>
-                      <div className="text-sm text-gray-500">
-                        {formatDate(transaction.date)}
-                        {transaction.tag && (
-                          <span className="ml-2 inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
-                            {transaction.tag.name}
-                          </span>
-                        )}
+            transactions.map((transaction) => {
+              const amountData = getTransactionAmount(transaction);
+              
+              return (
+                <div key={transaction.id} className="px-6 py-4">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center">
+                      {getTransactionIcon(transaction.transactionType)}
+                      <div className="ml-3">
+                        <div className="text-sm font-medium text-gray-900">{transaction.description}</div>
+                        <div className="text-sm text-gray-500">
+                          {formatDate(transaction.date)}
+                          {transaction.tag && (
+                            <span className="ml-2 inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-gray-100 text-gray-800">
+                              {transaction.tag.name}
+                            </span>
+                          )}
+                          {amountData.isConverted && (
+                            <span className="ml-2 text-xs text-blue-600">
+                              (converted from {amountData.originalCurrency})
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
-                  </div>
-                  <div className="text-right">
-                    <div className="text-sm font-medium text-gray-900">{formatCurrency(transaction.amount)}</div>
-                    <div className="text-sm text-gray-500 capitalize">{transaction.transactionType.toLowerCase()}</div>
+                    <div className="text-right">
+                      <div className="text-sm font-medium text-gray-900">
+                        {formatCurrency(amountData.amount, amountData.currency)}
+                      </div>
+                      <div className="text-sm text-gray-500 capitalize">
+                        {transaction.transactionType.toLowerCase()}
+                      </div>
+                      {amountData.isConverted && amountData.originalAmount && amountData.originalCurrency && (
+                        <div className="text-xs text-gray-500">
+                          Original: {formatCurrency(amountData.originalAmount, amountData.originalCurrency)}
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
 

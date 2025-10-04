@@ -25,29 +25,14 @@ model Account {
   name        String
   type        AccountType
   balance     Decimal     @default(0)
-  currency    String      @default("LKR") // ISO 4217 currency code (USD, EUR, GBP, etc.)
   description String?
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 
   // Relations
   entries TransactionEntry[]
-  tagBalances TagBalance[]
 
   @@map("accounts")
-}
-
-// Exchange Rate Model - stores daily exchange rates
-model ExchangeRate {
-  id           String   @id @default(cuid())
-  fromCurrency String   // Base currency (e.g., "USD")
-  toCurrency   String   // Target currency (e.g., "EUR")
-  rate         Decimal  // Exchange rate (1 USD = 0.85 EUR)
-  date         DateTime // Date for this rate
-  createdAt    DateTime @default(now())
-
-  @@unique([fromCurrency, toCurrency, date])
-  @@map("exchange_rates")
 }
 
 // Tag Model - for categorizing transactions
@@ -61,27 +46,8 @@ model Tag {
 
   // Relations
   transactions Transaction[]
-  balances    TagBalance[]
 
   @@map("tags")
-}
-
-// Tag Balance Model - tracks virtual balances for tags across physical accounts
-model TagBalance {
-  id          String   @id @default(cuid())
-  tagId       String
-  accountId   String
-  balance     Decimal   @default(0) // Virtual balance for this tag in this account
-  currency    String   // Currency of the balance (must match account currency)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-
-  // Relations
-  tag         Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
-  account     Account  @relation(fields: [accountId], references: [id])
-
-  @@unique([tagId, accountId, currency]) // One balance per tag per account per currency
-  @@map("tag_balances")
 }
 
 // Transaction Model - represents a complete transaction
@@ -111,12 +77,6 @@ model TransactionEntry {
   debitAmount   Decimal     @default(0) // Positive for debit
   creditAmount  Decimal     @default(0) // Positive for credit
   entryType     String      // 'DEBIT' or 'CREDIT'
-  
-  // Currency conversion fields
-  originalAmount    Decimal?  // Original amount before conversion
-  originalCurrency  String?   // Original currency code
-  exchangeRate      Decimal?  // Exchange rate used for conversion
-  
   createdAt     DateTime    @default(now())
 
   // Relations

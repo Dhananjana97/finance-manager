@@ -5,11 +5,29 @@ import { useParams, useRouter } from 'next/navigation'
 import { ArrowLeft, DollarSign, TrendingUp, TrendingDown, Calendar, Tag } from 'lucide-react'
 import { AccountType } from '@/generated/prisma'
 
+// Currency information
+const CURRENCY_INFO = {
+  LKR: { symbol: 'Rs.', name: 'Sri Lankan Rupee' },
+  USD: { symbol: '$', name: 'US Dollar' },
+  EUR: { symbol: '€', name: 'Euro' },
+  GBP: { symbol: '£', name: 'British Pound' },
+  JPY: { symbol: '¥', name: 'Japanese Yen' },
+  AUD: { symbol: 'A$', name: 'Australian Dollar' },
+  CAD: { symbol: 'C$', name: 'Canadian Dollar' },
+  CHF: { symbol: 'CHF', name: 'Swiss Franc' },
+  CNY: { symbol: '¥', name: 'Chinese Yuan' },
+  INR: { symbol: '₹', name: 'Indian Rupee' },
+  BRL: { symbol: 'R$', name: 'Brazilian Real' },
+  KRW: { symbol: '₩', name: 'South Korean Won' },
+  THB: { symbol: '฿', name: 'Thai Baht' },
+} as const
+
 interface Account {
   id: string
   name: string
   type: AccountType
   balance: number
+  currency: string
   description?: string
 }
 
@@ -30,6 +48,9 @@ interface Transaction {
     debitAmount: number
     creditAmount: number
     entryType: string
+    originalAmount?: number
+    originalCurrency?: string
+    exchangeRate?: number
   }[]
 }
 
@@ -92,11 +113,17 @@ export default function AccountDetailPage() {
     }
   }
 
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('en-LK', {
-      style: 'currency',
-      currency: 'LKR',
-    }).format(amount)
+  const getCurrencySymbol = (currencyCode: string) => {
+    const currency = CURRENCY_INFO[currencyCode as keyof typeof CURRENCY_INFO]
+    return currency?.symbol || currencyCode
+  }
+
+  const formatCurrency = (amount: number, currencyCode: string) => {
+    const symbol = getCurrencySymbol(currencyCode)
+    return `${symbol}${new Intl.NumberFormat('en-US', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(amount)}`
   }
 
   const formatDate = (dateString: string) => {
@@ -105,12 +132,19 @@ export default function AccountDetailPage() {
 
   const getTransactionAmount = (transaction: Transaction, accountId: string) => {
     const entry = transaction.entries.find(e => e.account.id === accountId)
-    if (!entry) return 0
+    if (!entry) return { amount: 0, currency: 'USD', isConverted: false, originalAmount: 0, originalCurrency: 'USD', exchangeRate: 1 }
     
-    if (entry.entryType === 'DEBIT') {
-      return entry.debitAmount
-    } else {
-      return -entry.creditAmount
+    const amount = entry.entryType === 'DEBIT' ? entry.debitAmount : -entry.creditAmount
+    const currency = entry.account.currency
+    const isConverted = !!(entry.originalAmount && entry.originalCurrency && entry.exchangeRate)
+    
+    return {
+      amount,
+      currency,
+      isConverted,
+      originalAmount: entry.originalAmount || amount,
+      originalCurrency: entry.originalCurrency || currency,
+      exchangeRate: entry.exchangeRate || 1
     }
   }
 
@@ -160,9 +194,12 @@ export default function AccountDetailPage() {
             </div>
             <div className="text-right">
               <div className="text-3xl font-bold text-gray-900">
-                {formatCurrency(account.balance)}
+                {formatCurrency(account.balance, account.currency)}
               </div>
               <div className="text-sm text-gray-600">Current Balance</div>
+              <div className="text-xs text-gray-500 mt-1">
+                {account.currency} - {CURRENCY_INFO[account.currency as keyof typeof CURRENCY_INFO]?.name || account.currency}
+              </div>
             </div>
           </div>
           
@@ -189,8 +226,8 @@ export default function AccountDetailPage() {
         ) : (
           <div className="divide-y divide-gray-200">
             {transactions.map((transaction) => {
-              const amount = getTransactionAmount(transaction, account.id)
-              const isPositive = amount > 0
+              const amountData = getTransactionAmount(transaction, account.id)
+              const isPositive = amountData.amount > 0
               
               return (
                 <div key={transaction.id} className="px-6 py-4">
@@ -214,10 +251,22 @@ export default function AccountDetailPage() {
                       </div>
                       <div className="text-sm text-gray-500">
                         {formatDate(transaction.date)} • {transaction.transactionType.toLowerCase()}
+                        {amountData.isConverted && (
+                          <span className="ml-2 text-xs text-blue-600">
+                            (converted from {amountData.originalCurrency})
+                          </span>
+                        )}
                       </div>
                     </div>
-                    <div className={`text-sm font-medium ${isPositive ? 'text-green-600' : 'text-red-600'}`}>
-                      {isPositive ? '+' : ''}{formatCurrency(Math.abs(amount))}
+                    <div className="text-right">
+                      <div className={`text-sm font-medium ${isPositive ? 'text-green-600' : 'text-red-600'}`}>
+                        {isPositive ? '+' : ''}{formatCurrency(Math.abs(amountData.amount), amountData.currency)}
+                      </div>
+                      {amountData.isConverted && (
+                        <div className="text-xs text-gray-500">
+                          Original: {formatCurrency(Math.abs(amountData.originalAmount), amountData.originalCurrency)}
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>
